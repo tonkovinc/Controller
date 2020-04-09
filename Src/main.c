@@ -40,6 +40,11 @@
 /* USER CODE BEGIN PD */
 #define DAC_MAX 4095
 #define DAC_MIN 2400
+#define TempNormMin 18
+#define TempNormMax 22
+#define HumNormMin 35
+#define HumNormMax 60
+#define co2_max 600
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -71,7 +76,8 @@ uint8_t fakebuf[2];
 int LCDrow=0, LCDcol=0; 
 float t_1 = 0.0f, h_1 = 0.0f, t_2 = 0.0f, h_2 = 0.0f, tV_1 = 0.0f, tV_2 = 0.0f, co2_1 = 0.0f, co2_2 = 0.0f;
 int peop_1 = 0, peop_2 = 0;
-int TempNormMin = 18,TempNormMax = 22, HumNormMin = 35, HumNormMax = 60, co2_max = 800;
+
+int OpenValveStep;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -99,8 +105,13 @@ int mycmp(unsigned char* s1, char* s2, int f);
 void clr_str(unsigned char* s1, unsigned int len);
 void CloseValveOneStep(int a);
 void OpenValveOneStep(int a);
-void CloseValve(void);
-void OpenValve(void);
+void CloseValve(int a);
+void OpenValve(int a);
+void CheckTemp(float t, float h, float co2);
+void CheckHum(float t, float h, float co2);
+void CheckCO2(float t, float h, float co2);
+void CheckValve(int a);
+void CheckParam(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -158,10 +169,7 @@ int main(void)
     /* USER CODE END WHILE */
 		HAL_DAC_SetValue(&hdac,DAC_CHANNEL_1,DAC_ALIGN_12B_R,DAC_MAX);
 		HAL_UART_Receive_IT(&huart3, (uint8_t *)fakebuf,1); 
-		ReadTemp();
-		ReadHum();
-		ReadCo2();
-		CheckDevices(t_1, h_1, co2_1, t_2, h_2, co2_2);
+		CheckParam();
 		WifiSend();
     /* USER CODE BEGIN 3 */
   }
@@ -564,12 +572,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 					if((err == 1)) {
 					puts0("NoDetectedCommand\r\n");}
 					sprintf(str1, "%s%s", buf, "\n");
-					puts0(str1);
-	  
-
-				clr_str(buf, pos);
-				pos=0;
-				}
+					puts0(str1);		
+					clr_str(buf, pos);
+					pos=0;
+					}
 			HAL_UART_Receive_IT(&huart3, (uint8_t *)fakebuf,1); 
 	}
 }
@@ -644,51 +650,102 @@ void ReadCo2()
 		sprintf(str1, "Humidity: %.3f %%\r\n", h_1);
 		puts0(str1);
 }
-void CheckDevices(float t_1,float h_1,float co2_1,float t_2,float h_2,float co2_2)
-{
-		if (t_1 < TempNormMin)
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
-		else HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);	
-		
-		if (t_1 > TempNormMax)
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
-		else HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);	
-		
-		if (h_1 < HumNormMin)
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
-		else HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
-		
-		if (h_1 > HumNormMax)
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
-		else HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
-		
-		if (co2_1 > co2_max)
-			OpenValve();
-		else 
-			CloseValve();
-		
-		if (t_2 < TempNormMin)
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
-		else HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);	
-		
-		if (t_2 > TempNormMax)
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
-		else HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);	
-		
-		if (h_2 < HumNormMin)
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
-		else HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
-		
-		if (h_2 > HumNormMax)
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
-		else HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
-		
-		if (co2_2	> co2_max)
-			OpenValve();
-		else 
-			CloseValve();
-}
 
+//GPIOD8 - heater
+void CheckTemp(float t, float h, float co2)
+{
+	if (t > TempNormMax)
+		OpenValveStep++;
+	else
+		if ((co2 < co2_max) && (h < HumNormMax) && (h > HumNormMin))
+			OpenValveStep--;
+	if (t < TempNormMin)
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_8, GPIO_PIN_SET);
+	else
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_8, GPIO_PIN_RESET);
+}	
+
+void CheckCO2(float t, float h, float co2)
+{
+	if (co2 > co2_max)
+		OpenValveStep++;
+	else
+		if ((t < TempNormMax) && (t > TempNormMin) && (h < HumNormMax) && (h > HumNormMin))
+			OpenValveStep--;
+}	
+
+//GPIOD9 - humidifier
+void CheckHum(float t, float h, float co2)
+{
+	if (h > HumNormMax)
+		OpenValveStep++;
+	else
+		if ((co2 < co2_max) && (t < TempNormMax) && (t > TempNormMin))
+			OpenValveStep--;
+	if (h < HumNormMin)
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_9, GPIO_PIN_SET); 
+	else
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_9, GPIO_PIN_RESET);
+}	
+
+void CheckValve(int a)
+{
+	switch (a){
+		case 0:
+		{		
+			OpenValve(0);
+			break;
+		}			
+		case 1:
+		{		
+			OpenValve(26);
+			break;
+		}			
+		case 2:
+		{		
+			OpenValve(52);
+			break;
+		}			
+		case 3:
+		{		
+			OpenValve(78);
+			break;
+		}	
+		case 4:
+		{		
+			OpenValve(104);
+			break;
+		}
+		case 5:
+		{		
+			OpenValve(130);
+			break;
+		}
+		default:
+		{
+			CloseValve(130);
+			OpenValveStep = 0;
+			break;
+		}
+	}
+}
+void CheckParam()
+{
+		ReadTemp();
+		ReadHum();
+		ReadCo2();
+		CheckCO2(t_1, h_1, co2_1);
+		CheckValve(OpenValveStep);
+		CheckCO2(t_2, h_2, co2_2);
+		CheckValve(OpenValveStep);
+		CheckHum(t_1, h_1, co2_1);
+		CheckValve(OpenValveStep);
+		CheckHum(t_2, h_2, co2_2);
+		CheckValve(OpenValveStep);
+		CheckTemp(t_1, h_1, co2_1);
+		CheckValve(OpenValveStep);
+		CheckTemp(t_2, h_2, co2_2);
+}
 void CloseValveOneStep(int a)
 {
 	int i=0;
@@ -753,20 +810,20 @@ void OpenValveOneStep(int a)
 	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, GPIO_PIN_RESET);
 }
 
-void OpenValve()
+void OpenValve(int a)
 {
 		int j;
-		for (j = 0; j < 130; j++)
+		for (j = 0; j < a; j++)
 		{
 			OpenValveOneStep(1);
 			HAL_Delay(10);
 		}
 }
 
-void CloseValve()
+void CloseValve(int a)
 {
 		int j;
-		for (j = 0; j < 130; j++)
+		for (j = 0; j < a; j++)
 		{
 			CloseValveOneStep(1);
 			HAL_Delay(10);
